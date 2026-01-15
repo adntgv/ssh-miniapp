@@ -111,19 +111,18 @@ export function useTerminal({
       console.log('WebSocket connected');
       terminal.writeln('Connecting to server...\r\n');
 
-      // Send initial terminal size
-      if (fitAddon.current) {
-        const dimensions = fitAddon.current.proposeDimensions();
-        if (dimensions) {
-          ws.send(
-            JSON.stringify({
-              type: 'resize',
-              cols: dimensions.cols,
-              rows: dimensions.rows,
-            })
-          );
-        }
-      }
+      // Get terminal dimensions
+      const dimensions = fitAddon.current?.proposeDimensions();
+
+      // Send connect message with connectionId and terminal size
+      ws.send(
+        JSON.stringify({
+          type: 'connect',
+          connectionId: parseInt(connectionId, 10),
+          cols: dimensions?.cols || 80,
+          rows: dimensions?.rows || 24,
+        })
+      );
     };
 
     ws.onmessage = (event) => {
