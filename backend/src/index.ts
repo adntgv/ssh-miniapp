@@ -11,6 +11,9 @@ import connectionsRouter from './routes/connections';
 // Initialize Express app
 const app = express();
 
+// Trust proxy (important when behind reverse proxy like Traefik/Cloudflare)
+app.set('trust proxy', 1);
+
 // Create HTTP server
 const server = http.createServer(app);
 
