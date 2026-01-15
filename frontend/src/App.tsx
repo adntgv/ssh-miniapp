@@ -1,11 +1,10 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useTelegram } from './hooks/useTelegram';
-import { useCloudStorage } from './hooks/useCloudStorage';
 import { ConnectionList } from './components/ConnectionList';
 import { ConnectionForm } from './components/ConnectionForm';
 import { Terminal } from './components/Terminal';
 import { Connection, ConnectionFormData } from './types';
-import { api, createConnection } from './services/api';
+import { api } from './services/api';
 
 type View = 'list' | 'form' | 'terminal';
 
@@ -17,18 +16,47 @@ function App() {
     hideBackButton,
   } = useTelegram();
 
-  const {
-    connections,
-    isLoading: isLoadingConnections,
-    saveConnection,
-    deleteConnection,
-  } = useCloudStorage();
-
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [isLoadingConnections, setIsLoadingConnections] = useState(true);
   const [currentView, setCurrentView] = useState<View>('list');
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
   const [activeConnection, setActiveConnection] = useState<Connection | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Load connections from backend
+  const loadConnections = useCallback(async () => {
+    if (!initData) return;
+
+    setIsLoadingConnections(true);
+    try {
+      const result = await api.listConnections(initData);
+      if (result.success && result.data) {
+        // Convert backend connections to frontend format
+        const frontendConnections: Connection[] = result.data.connections.map((c) => ({
+          id: String(c.id),
+          name: c.name,
+          host: c.host,
+          port: c.port,
+          username: c.username,
+          type: c.useMosh ? 'mosh' : 'ssh',
+          createdAt: c.createdAt,
+          updatedAt: c.updatedAt,
+        }));
+        setConnections(frontendConnections);
+      }
+    } catch (err) {
+      console.error('Failed to load connections:', err);
+    } finally {
+      setIsLoadingConnections(false);
+    }
+  }, [initData]);
+
+  useEffect(() => {
+    if (isReady && initData) {
+      loadConnections();
+    }
+  }, [isReady, initData, loadConnections]);
 
   // Handle back button
   useEffect(() => {
@@ -61,17 +89,19 @@ function App() {
     async (connection: Connection) => {
       if (window.confirm(`Delete connection "${connection.name}"?`)) {
         try {
-          // Delete credentials from backend
-          await api.deleteCredentials(connection.id, initData);
-          // Delete metadata from cloud storage
-          await deleteConnection(connection.id);
+          const result = await api.deleteConnection(parseInt(connection.id, 10), initData);
+          if (result.success) {
+            await loadConnections();
+          } else {
+            throw new Error(result.error || 'Failed to delete');
+          }
         } catch (err) {
           console.error('Failed to delete connection:', err);
           setError('Failed to delete connection');
         }
       }
     },
-    [deleteConnection, initData]
+    [initData, loadConnections]
   );
 
   const handleConnect = useCallback((connection: Connection) => {
@@ -85,42 +115,26 @@ function App() {
       setError(null);
 
       try {
-        let connectionToSave: Connection;
+        let result;
 
         if (editingConnection) {
           // Update existing connection
-          connectionToSave = {
-            ...editingConnection,
-            name: formData.name,
-            host: formData.host,
-            port: formData.port,
-            username: formData.username,
-            type: formData.type,
-            updatedAt: new Date().toISOString(),
-          };
-        } else {
-          // Create new connection
-          connectionToSave = createConnection(formData);
-        }
-
-        // Save credentials to backend if provided
-        if (formData.password || formData.privateKey) {
-          const credResult = await api.saveCredentials(
-            connectionToSave.id,
-            {
-              password: formData.password,
-              privateKey: formData.privateKey,
-            },
+          result = await api.updateConnection(
+            parseInt(editingConnection.id, 10),
+            formData,
             initData
           );
-
-          if (!credResult.success) {
-            throw new Error(credResult.error || 'Failed to save credentials');
-          }
+        } else {
+          // Create new connection
+          result = await api.createConnection(formData, initData);
         }
 
-        // Save connection metadata to cloud storage
-        await saveConnection(connectionToSave);
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to save connection');
+        }
+
+        // Reload connections from backend
+        await loadConnections();
 
         // Navigate back to list
         setEditingConnection(null);
@@ -134,7 +148,7 @@ function App() {
         setIsSaving(false);
       }
     },
-    [editingConnection, saveConnection, initData]
+    [editingConnection, initData, loadConnections]
   );
 
   const handleCancelForm = useCallback(() => {

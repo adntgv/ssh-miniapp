@@ -2,6 +2,18 @@ import { ApiResponse, ConnectionFormData, Connection } from '../types';
 
 const API_BASE = '/api';
 
+interface BackendConnection {
+  id: number;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  authType: 'password' | 'key';
+  useMosh: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 async function request<T>(
   endpoint: string,
   options: RequestInit = {},
@@ -45,28 +57,66 @@ async function request<T>(
 }
 
 export const api = {
-  // Connection credentials management
-  saveCredentials: async (
-    connectionId: string,
-    credentials: { password?: string; privateKey?: string },
+  // Create a new connection with credentials
+  createConnection: async (
+    formData: ConnectionFormData,
     initData?: string | null
-  ): Promise<ApiResponse<void>> => {
-    return request<void>(
-      `/connections/${connectionId}/credentials`,
+  ): Promise<ApiResponse<{ connection: BackendConnection }>> => {
+    return request<{ connection: BackendConnection }>(
+      '/connections',
       {
         method: 'POST',
-        body: JSON.stringify(credentials),
+        body: JSON.stringify({
+          name: formData.name,
+          host: formData.host,
+          port: formData.port,
+          username: formData.username,
+          authType: formData.password ? 'password' : 'key',
+          authData: formData.password || formData.privateKey,
+          useMosh: formData.type === 'mosh',
+        }),
       },
       initData
     );
   },
 
-  deleteCredentials: async (
-    connectionId: string,
+  // Update an existing connection
+  updateConnection: async (
+    connectionId: number,
+    formData: Partial<ConnectionFormData>,
     initData?: string | null
-  ): Promise<ApiResponse<void>> => {
-    return request<void>(
-      `/connections/${connectionId}/credentials`,
+  ): Promise<ApiResponse<{ connection: BackendConnection }>> => {
+    const body: Record<string, unknown> = {};
+    if (formData.name) body.name = formData.name;
+    if (formData.host) body.host = formData.host;
+    if (formData.port) body.port = formData.port;
+    if (formData.username) body.username = formData.username;
+    if (formData.type) body.useMosh = formData.type === 'mosh';
+    if (formData.password) {
+      body.authType = 'password';
+      body.authData = formData.password;
+    } else if (formData.privateKey) {
+      body.authType = 'key';
+      body.authData = formData.privateKey;
+    }
+
+    return request<{ connection: BackendConnection }>(
+      `/connections/${connectionId}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      },
+      initData
+    );
+  },
+
+  // Delete a connection
+  deleteConnection: async (
+    connectionId: number,
+    initData?: string | null
+  ): Promise<ApiResponse<{ success: boolean }>> => {
+    return request<{ success: boolean }>(
+      `/connections/${connectionId}`,
       {
         method: 'DELETE',
       },
@@ -74,16 +124,14 @@ export const api = {
     );
   },
 
-  // Test connection
-  testConnection: async (
-    connectionData: ConnectionFormData,
+  // List all connections
+  listConnections: async (
     initData?: string | null
-  ): Promise<ApiResponse<{ success: boolean; message: string }>> => {
-    return request<{ success: boolean; message: string }>(
-      '/connections/test',
+  ): Promise<ApiResponse<{ connections: BackendConnection[] }>> => {
+    return request<{ connections: BackendConnection[] }>(
+      '/connections',
       {
-        method: 'POST',
-        body: JSON.stringify(connectionData),
+        method: 'GET',
       },
       initData
     );
