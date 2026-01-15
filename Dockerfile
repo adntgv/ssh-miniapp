@@ -46,15 +46,17 @@ RUN apk add --no-cache \
 RUN addgroup -g 1001 -S appgroup && \
     adduser -u 1001 -S appuser -G appgroup
 
-# Copy package files and install production dependencies only
-COPY backend/package.json ./
-RUN npm install --omit=dev && npm cache clean --force
-
 # Copy built frontend to public directory
 COPY --from=builder /app/frontend/dist ./public
 
 # Copy built backend
 COPY --from=builder /app/backend/dist ./dist
+
+# Copy node_modules from builder (includes native modules like better-sqlite3, node-pty)
+COPY --from=builder /app/backend/node_modules ./node_modules
+
+# Copy package.json for reference
+COPY backend/package.json ./
 
 # Create data directory for SQLite persistence
 RUN mkdir -p /app/data && chown -R appuser:appgroup /app/data

@@ -1,0 +1,35 @@
+{
+  "name": "ssh-miniapp",
+  "description": "Telegram Mini App for SSH/Mosh connections",
+  "type": "docker-compose",
+  "compose": {
+    "file": "docker-compose.yml"
+  },
+  "environment": {
+    "BOT_TOKEN": "${BOT_TOKEN}",
+    "MASTER_KEY": "${MASTER_KEY}",
+    "DATABASE_PATH": "/app/data/ssh-miniapp.db",
+    "NODE_ENV": "production"
+  },
+  "build": {
+    "context": ".",
+    "dockerfile": "Dockerfile"
+  },
+  "services": {
+    "app": {
+      "restart": "always",
+      "expose": [3000],
+      "healthcheck": {
+        "test": ["CMD", "wget", "-q", "--spider", "http://localhost:3000/api/health"],
+        "interval": "30s",
+        "timeout": "10s",
+        "retries": 3
+      }
+    }
+  },
+  "deployment": {
+    "strategy": "rolling",
+    "auto_deploy": false,
+    "branch": "master"
+  }
+}
