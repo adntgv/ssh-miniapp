@@ -25,7 +25,7 @@ export const config: Config = {
   botToken: getEnvVar('BOT_TOKEN'),
   masterKey: getEnvVar('MASTER_KEY'),
   databasePath: getEnvVar('DATABASE_PATH', path.join(__dirname, '../data/ssh-miniapp.db')),
-  frontendPath: getEnvVar('FRONTEND_PATH', path.join(__dirname, '../../frontend/dist')),
+  frontendPath: getEnvVar('FRONTEND_PATH', path.join(__dirname, '../public')),
   nodeEnv: process.env.NODE_ENV || 'development',
 };
 
