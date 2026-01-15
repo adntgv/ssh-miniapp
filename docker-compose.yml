@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ssh-miniapp
+    ports:
+      - "3000:3000"
+    volumes:
+      # SQLite database persistence
+      - ./data:/app/data
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - MASTER_KEY=${MASTER_KEY}
+      - DATABASE_PATH=${DATABASE_PATH}
+      - NODE_ENV=${NODE_ENV}
+      - PORT=3000
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+      - ssh-miniapp-network
+
+networks:
+  ssh-miniapp-network:
+    driver: bridge
