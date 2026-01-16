@@ -74,7 +74,7 @@ export function Terminal({
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '8px 12px',
-          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 12px)',
+          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 56px)',
           backgroundColor: '#2d2d2d',
           borderBottom: '1px solid #404040',
         }}
