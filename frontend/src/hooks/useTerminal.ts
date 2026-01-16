@@ -53,6 +53,9 @@ export function useTerminal({
   // Connection state machine to prevent duplicate connections
   const connectionStateRef = useRef<'idle' | 'connecting' | 'connected' | 'disconnecting'>('idle');
 
+  // Track connection instance to ignore stale WebSocket callbacks
+  const connectionInstanceRef = useRef(0);
+
   const initTerminal = useCallback(() => {
     if (!terminalRef.current || terminalInstance.current) return;
 
@@ -108,6 +111,9 @@ export function useTerminal({
       return;
     }
     connectionStateRef.current = 'connecting';
+
+    // Increment instance ID to invalidate any pending callbacks from previous connections
+    const currentInstance = ++connectionInstanceRef.current;
 
     setIsConnecting(true);
     setError(null);
@@ -173,6 +179,9 @@ export function useTerminal({
     };
 
     ws.onmessage = (event) => {
+      // Ignore messages from stale connections
+      if (currentInstance !== connectionInstanceRef.current) return;
+
       try {
         const message: WebSocketMessage = JSON.parse(event.data);
 
@@ -208,11 +217,16 @@ export function useTerminal({
         }
       } catch {
         // Plain text data (raw terminal output)
-        term.write(event.data);
+        if (currentInstance === connectionInstanceRef.current) {
+          term.write(event.data);
+        }
       }
     };
 
     ws.onerror = () => {
+      // Ignore errors from stale connections
+      if (currentInstance !== connectionInstanceRef.current) return;
+
       connectionStateRef.current = 'idle';
       setIsConnecting(false);
       setIsConnected(false);
@@ -221,6 +235,9 @@ export function useTerminal({
     };
 
     ws.onclose = () => {
+      // Ignore close events from stale connections
+      if (currentInstance !== connectionInstanceRef.current) return;
+
       connectionStateRef.current = 'idle';
       setIsConnecting(false);
       setIsConnected(false);
