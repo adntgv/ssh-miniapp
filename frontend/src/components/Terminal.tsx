@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import '@xterm/xterm/css/xterm.css';
 import { useTerminal } from '../hooks/useTerminal';
 import { buttonStyles } from './Layout';
@@ -38,12 +38,21 @@ export function Terminal({
     },
   });
 
+  // Stabilize connect/disconnect refs to avoid useEffect re-runs
+  const connectRef = useRef(connect);
+  const disconnectRef = useRef(disconnect);
+
   useEffect(() => {
-    connect();
-    return () => {
-      disconnect();
-    };
+    connectRef.current = connect;
+    disconnectRef.current = disconnect;
   }, [connect, disconnect]);
+
+  useEffect(() => {
+    connectRef.current();
+    return () => {
+      disconnectRef.current();
+    };
+  }, []); // Empty deps - runs only on mount/unmount
 
   useEffect(() => {
     // Resize terminal after mount

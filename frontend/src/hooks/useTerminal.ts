@@ -38,6 +38,21 @@ export function useTerminal({
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Store callbacks in refs to avoid dependency changes
+  const onConnectedRef = useRef(onConnected);
+  const onDisconnectedRef = useRef(onDisconnected);
+  const onErrorRef = useRef(onError);
+
+  // Keep refs updated
+  useEffect(() => {
+    onConnectedRef.current = onConnected;
+    onDisconnectedRef.current = onDisconnected;
+    onErrorRef.current = onError;
+  }, [onConnected, onDisconnected, onError]);
+
+  // Connection state machine to prevent duplicate connections
+  const connectionStateRef = useRef<'idle' | 'connecting' | 'connected' | 'disconnecting'>('idle');
+
   const initTerminal = useCallback(() => {
     if (!terminalRef.current || terminalInstance.current) return;
 
@@ -87,9 +102,12 @@ export function useTerminal({
   }, []);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    // Connection state guard to prevent duplicate connections
+    if (connectionStateRef.current !== 'idle') {
+      console.log(`Connection blocked: state is ${connectionStateRef.current}`);
       return;
     }
+    connectionStateRef.current = 'connecting';
 
     setIsConnecting(true);
     setError(null);
@@ -98,8 +116,10 @@ export function useTerminal({
     if (!terminalRef.current) {
       setTimeout(() => {
         if (terminalRef.current) {
+          connectionStateRef.current = 'idle'; // Reset state before retry
           connect();
         } else {
+          connectionStateRef.current = 'idle';
           setIsConnecting(false);
           setError('Terminal container not found');
         }
@@ -113,6 +133,7 @@ export function useTerminal({
       if (terminalInstance.current) {
         // Continue with existing terminal
       } else {
+        connectionStateRef.current = 'idle';
         setIsConnecting(false);
         setError('Failed to initialize terminal');
         return;
@@ -121,6 +142,7 @@ export function useTerminal({
 
     const term = terminal || terminalInstance.current;
     if (!term) {
+      connectionStateRef.current = 'idle';
       setIsConnecting(false);
       setError('Terminal not available');
       return;
@@ -156,9 +178,10 @@ export function useTerminal({
 
         switch (message.type) {
           case 'connected':
+            connectionStateRef.current = 'connected';
             setIsConnecting(false);
             setIsConnected(true);
-            onConnected?.();
+            onConnectedRef.current?.();
             break;
 
           case 'output':
@@ -168,17 +191,19 @@ export function useTerminal({
             break;
 
           case 'error':
+            connectionStateRef.current = 'idle';
             setIsConnecting(false);
             setIsConnected(false);
             setError(message.error || 'Connection error');
             term.writeln(`\r\n\x1b[31mError: ${message.error}\x1b[0m\r\n`);
-            onError?.(message.error || 'Connection error');
+            onErrorRef.current?.(message.error || 'Connection error');
             break;
 
           case 'disconnected':
+            connectionStateRef.current = 'idle';
             setIsConnected(false);
             term.writeln('\r\n\x1b[33mConnection closed.\x1b[0m\r\n');
-            onDisconnected?.();
+            onDisconnectedRef.current?.();
             break;
         }
       } catch {
@@ -188,6 +213,7 @@ export function useTerminal({
     };
 
     ws.onerror = () => {
+      connectionStateRef.current = 'idle';
       setIsConnecting(false);
       setIsConnected(false);
       setError('WebSocket connection error');
@@ -195,9 +221,10 @@ export function useTerminal({
     };
 
     ws.onclose = () => {
+      connectionStateRef.current = 'idle';
       setIsConnecting(false);
       setIsConnected(false);
-      onDisconnected?.();
+      onDisconnectedRef.current?.();
     };
 
     // Handle terminal input
@@ -206,15 +233,21 @@ export function useTerminal({
         ws.send(JSON.stringify({ type: 'input', data }));
       }
     });
-  }, [connectionId, initData, initTerminal, onConnected, onDisconnected, onError]);
+  }, [connectionId, initData, initTerminal]); // Removed callback props - using refs instead
 
   const disconnect = useCallback(() => {
+    if (connectionStateRef.current === 'idle' || connectionStateRef.current === 'disconnecting') {
+      return;
+    }
+    connectionStateRef.current = 'disconnecting';
+
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
     }
     setIsConnected(false);
     setIsConnecting(false);
+    connectionStateRef.current = 'idle';
   }, []);
 
   const sendInput = useCallback((data: string) => {
