@@ -133,6 +133,16 @@ export function useTelegram(): UseTelegramReturn {
     } catch {
       // Ignore if not in Telegram
     }
+    // Also use native Telegram WebApp API as fallback
+    try {
+      const tg = (window as unknown as { Telegram?: { WebApp?: { BackButton?: { show: () => void; onClick: (cb: () => void) => void } } } }).Telegram;
+      if (tg?.WebApp?.BackButton) {
+        tg.WebApp.BackButton.show();
+        tg.WebApp.BackButton.onClick(onClick);
+      }
+    } catch {
+      // Ignore if not available
+    }
   }, []);
 
   const hideBackButton = useCallback(() => {
@@ -141,6 +151,15 @@ export function useTelegram(): UseTelegramReturn {
       postEvent('web_app_setup_back_button', { is_visible: false });
     } catch {
       // Ignore if not in Telegram
+    }
+    // Also use native Telegram WebApp API as fallback
+    try {
+      const tg = (window as unknown as { Telegram?: { WebApp?: { BackButton?: { hide: () => void; offClick: (cb: () => void) => void } } } }).Telegram;
+      if (tg?.WebApp?.BackButton) {
+        tg.WebApp.BackButton.hide();
+      }
+    } catch {
+      // Ignore if not available
     }
   }, []);
 

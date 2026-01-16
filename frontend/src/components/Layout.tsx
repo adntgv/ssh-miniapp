@@ -16,7 +16,7 @@ export function Layout({ children, title, showHeader = true }: LayoutProps) {
         width: '100%',
         backgroundColor: 'var(--tg-theme-bg-color, #ffffff)',
         color: 'var(--tg-theme-text-color, #000000)',
-        paddingTop: 'calc(env(safe-area-inset-top, 0px) + 12px)',
+        paddingTop: 'calc(env(safe-area-inset-top, 0px) + 56px)',
       }}
     >
       {showHeader && title && (
