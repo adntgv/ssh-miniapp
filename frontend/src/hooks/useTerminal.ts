@@ -94,10 +94,35 @@ export function useTerminal({
     setIsConnecting(true);
     setError(null);
 
+    // Wait for DOM to be ready if ref is not attached
+    if (!terminalRef.current) {
+      setTimeout(() => {
+        if (terminalRef.current) {
+          connect();
+        } else {
+          setIsConnecting(false);
+          setError('Terminal container not found');
+        }
+      }, 100);
+      return;
+    }
+
     const terminal = initTerminal();
     if (!terminal) {
+      // Terminal might already be initialized, try to reuse
+      if (terminalInstance.current) {
+        // Continue with existing terminal
+      } else {
+        setIsConnecting(false);
+        setError('Failed to initialize terminal');
+        return;
+      }
+    }
+
+    const term = terminal || terminalInstance.current;
+    if (!term) {
       setIsConnecting(false);
-      setError('Failed to initialize terminal');
+      setError('Terminal not available');
       return;
     }
 
@@ -109,7 +134,7 @@ export function useTerminal({
 
     ws.onopen = () => {
       console.log('WebSocket connected');
-      terminal.writeln('Connecting to server...\r\n');
+      term.writeln('Connecting to server...\r\n');
 
       // Get terminal dimensions
       const dimensions = fitAddon.current?.proposeDimensions();
@@ -138,7 +163,7 @@ export function useTerminal({
 
           case 'output':
             if (message.data) {
-              terminal.write(message.data);
+              term.write(message.data);
             }
             break;
 
@@ -146,19 +171,19 @@ export function useTerminal({
             setIsConnecting(false);
             setIsConnected(false);
             setError(message.error || 'Connection error');
-            terminal.writeln(`\r\n\x1b[31mError: ${message.error}\x1b[0m\r\n`);
+            term.writeln(`\r\n\x1b[31mError: ${message.error}\x1b[0m\r\n`);
             onError?.(message.error || 'Connection error');
             break;
 
           case 'disconnected':
             setIsConnected(false);
-            terminal.writeln('\r\n\x1b[33mConnection closed.\x1b[0m\r\n');
+            term.writeln('\r\n\x1b[33mConnection closed.\x1b[0m\r\n');
             onDisconnected?.();
             break;
         }
       } catch {
         // Plain text data (raw terminal output)
-        terminal.write(event.data);
+        term.write(event.data);
       }
     };
 
@@ -166,7 +191,7 @@ export function useTerminal({
       setIsConnecting(false);
       setIsConnected(false);
       setError('WebSocket connection error');
-      terminal.writeln('\r\n\x1b[31mConnection error.\x1b[0m\r\n');
+      term.writeln('\r\n\x1b[31mConnection error.\x1b[0m\r\n');
     };
 
     ws.onclose = () => {
@@ -176,7 +201,7 @@ export function useTerminal({
     };
 
     // Handle terminal input
-    terminal.onData((data) => {
+    term.onData((data) => {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'input', data }));
       }
