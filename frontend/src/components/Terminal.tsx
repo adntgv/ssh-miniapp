@@ -23,6 +23,7 @@ export function Terminal({
     error,
     connect,
     disconnect,
+    sendInput,
     resize,
   } = useTerminal({
     connectionId,
@@ -154,6 +155,98 @@ export function Terminal({
           overflow: 'hidden',
         }}
       />
+
+      {/* Special keys row */}
+      {isConnected && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            padding: '8px 12px',
+            backgroundColor: '#2d2d2d',
+            borderTop: '1px solid #404040',
+          }}
+        >
+          <button
+            onClick={() => sendInput('\x1b[D')}
+            style={{
+              width: '48px',
+              height: '40px',
+              backgroundColor: '#404040',
+              border: 'none',
+              borderRadius: '6px',
+              color: '#ffffff',
+              fontSize: '18px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            aria-label="Left arrow"
+          >
+            ←
+          </button>
+          <button
+            onClick={() => sendInput('\x1b[B')}
+            style={{
+              width: '48px',
+              height: '40px',
+              backgroundColor: '#404040',
+              border: 'none',
+              borderRadius: '6px',
+              color: '#ffffff',
+              fontSize: '18px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            aria-label="Down arrow"
+          >
+            ↓
+          </button>
+          <button
+            onClick={() => sendInput('\x1b[A')}
+            style={{
+              width: '48px',
+              height: '40px',
+              backgroundColor: '#404040',
+              border: 'none',
+              borderRadius: '6px',
+              color: '#ffffff',
+              fontSize: '18px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            aria-label="Up arrow"
+          >
+            ↑
+          </button>
+          <button
+            onClick={() => sendInput('\x1b[C')}
+            style={{
+              width: '48px',
+              height: '40px',
+              backgroundColor: '#404040',
+              border: 'none',
+              borderRadius: '6px',
+              color: '#ffffff',
+              fontSize: '18px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            aria-label="Right arrow"
+          >
+            →
+          </button>
+        </div>
+      )}
 
       {/* Reconnect button when disconnected */}
       {!isConnecting && !isConnected && (
