@@ -2,11 +2,18 @@ import { EventEmitter } from 'events';
 import * as pty from 'node-pty';
 import { executeSSHCommand, SSHConnectionOptions } from './sshService';
 import { MoshServerInfo } from '../types';
+import { MoshSessionData } from '../db/sqlite';
 
 export interface MoshSession extends EventEmitter {
   write(data: string): void;
   resize(cols: number, rows: number): void;
   close(): void;
+}
+
+export interface MoshSessionResult {
+  session: MoshSession;
+  sessionData: MoshSessionData;
+  isReused: boolean;
 }
 
 /**
@@ -104,6 +111,207 @@ export async function createMoshSession(
   });
 
   // Implement session methods
+  session.write = (data: string) => {
+    ptyProcess.write(data);
+  };
+
+  session.resize = (cols: number, rows: number) => {
+    ptyProcess.resize(cols, rows);
+  };
+
+  session.close = () => {
+    ptyProcess.kill();
+  };
+
+  return session;
+}
+
+/**
+ * Connect mosh-client to an existing mosh-server
+ * Returns null if connection fails (server likely dead)
+ */
+function connectToMoshServer(
+  host: string,
+  serverInfo: MoshServerInfo,
+  cols: number,
+  rows: number
+): Promise<MoshSession | null> {
+  return new Promise((resolve) => {
+    const session = new EventEmitter() as MoshSession;
+
+    const env = {
+      ...process.env,
+      MOSH_KEY: serverInfo.key,
+      TERM: 'xterm-256color',
+    };
+
+    const moshClientArgs = [host, serverInfo.port.toString()];
+
+    console.log(`Attempting to reconnect mosh-client to ${host}:${serverInfo.port}`);
+
+    let ptyProcess: pty.IPty;
+    let connectionFailed = false;
+    let hasReceivedData = false;
+
+    try {
+      ptyProcess = pty.spawn('mosh-client', moshClientArgs, {
+        name: 'xterm-256color',
+        cols,
+        rows,
+        cwd: process.env.HOME,
+        env: env as { [key: string]: string },
+      });
+    } catch (err) {
+      console.error('Failed to spawn mosh-client:', (err as Error).message);
+      resolve(null);
+      return;
+    }
+
+    // Set a timeout for connection - if no data within 5 seconds, assume failed
+    const connectionTimeout = setTimeout(() => {
+      if (!hasReceivedData) {
+        console.log('Mosh reconnection timeout - no data received');
+        connectionFailed = true;
+        ptyProcess.kill();
+        resolve(null);
+      }
+    }, 5000);
+
+    ptyProcess.onData((data: string) => {
+      hasReceivedData = true;
+      clearTimeout(connectionTimeout);
+      session.emit('data', data);
+    });
+
+    ptyProcess.onExit(({ exitCode, signal }) => {
+      clearTimeout(connectionTimeout);
+      console.log(`Mosh client exited with code ${exitCode}, signal ${signal}`);
+      if (!hasReceivedData && !connectionFailed) {
+        // Exited without receiving data - connection failed
+        resolve(null);
+      } else {
+        session.emit('close');
+      }
+    });
+
+    session.write = (data: string) => {
+      ptyProcess.write(data);
+    };
+
+    session.resize = (cols: number, rows: number) => {
+      ptyProcess.resize(cols, rows);
+    };
+
+    session.close = () => {
+      clearTimeout(connectionTimeout);
+      ptyProcess.kill();
+    };
+
+    // If we got data, resolve with the session after a short delay
+    // to ensure connection is stable
+    const checkInterval = setInterval(() => {
+      if (hasReceivedData) {
+        clearInterval(checkInterval);
+        clearTimeout(connectionTimeout);
+        resolve(session);
+      }
+    }, 100);
+
+    // Clean up interval after timeout
+    setTimeout(() => clearInterval(checkInterval), 5500);
+  });
+}
+
+/**
+ * Create or reuse a Mosh session
+ * If existingSessionData is provided, tries to reconnect first
+ */
+export async function createOrReuseMoshSession(
+  options: SSHConnectionOptions,
+  initialCols: number = 80,
+  initialRows: number = 24,
+  existingSessionData?: MoshSessionData
+): Promise<MoshSessionResult> {
+  // Try to reconnect to existing session first
+  if (existingSessionData) {
+    console.log(`Attempting to reuse existing mosh session on port ${existingSessionData.port}`);
+    const session = await connectToMoshServer(
+      existingSessionData.host,
+      { port: existingSessionData.port, key: existingSessionData.key },
+      initialCols,
+      initialRows
+    );
+
+    if (session) {
+      console.log('Successfully reconnected to existing mosh session');
+      return {
+        session,
+        sessionData: existingSessionData,
+        isReused: true,
+      };
+    }
+    console.log('Failed to reconnect, starting new mosh session');
+  }
+
+  // Start new mosh-server on remote, then connect
+  const serverInfo = await startMoshServer(options);
+  const newSession = await createMoshSessionInternal(options, serverInfo, initialCols, initialRows);
+
+  return {
+    session: newSession,
+    sessionData: {
+      host: options.host,
+      port: serverInfo.port,
+      key: serverInfo.key,
+    },
+    isReused: false,
+  };
+}
+
+/**
+ * Internal function to create mosh session with known server info
+ */
+async function createMoshSessionInternal(
+  options: SSHConnectionOptions,
+  serverInfo: MoshServerInfo,
+  cols: number,
+  rows: number
+): Promise<MoshSession> {
+  const session = new EventEmitter() as MoshSession;
+
+  const env = {
+    ...process.env,
+    MOSH_KEY: serverInfo.key,
+    TERM: 'xterm-256color',
+  };
+
+  const moshClientArgs = [options.host, serverInfo.port.toString()];
+
+  console.log(`Spawning mosh-client to ${options.host}:${serverInfo.port}`);
+
+  let ptyProcess: pty.IPty;
+
+  try {
+    ptyProcess = pty.spawn('mosh-client', moshClientArgs, {
+      name: 'xterm-256color',
+      cols,
+      rows,
+      cwd: process.env.HOME,
+      env: env as { [key: string]: string },
+    });
+  } catch (err) {
+    throw new Error(`Failed to spawn mosh-client: ${(err as Error).message}`);
+  }
+
+  ptyProcess.onData((data: string) => {
+    session.emit('data', data);
+  });
+
+  ptyProcess.onExit(({ exitCode, signal }) => {
+    console.log(`Mosh client exited with code ${exitCode}, signal ${signal}`);
+    session.emit('close');
+  });
+
   session.write = (data: string) => {
     ptyProcess.write(data);
   };

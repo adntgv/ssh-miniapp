@@ -50,6 +50,21 @@ export function initDatabase(): Database.Database {
 
     CREATE INDEX IF NOT EXISTS idx_credentials_user_id ON credentials(user_id);
     CREATE INDEX IF NOT EXISTS idx_users_telegram_user_id ON users(telegram_user_id);
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      credential_id INTEGER NOT NULL,
+      session_type TEXT NOT NULL CHECK (session_type IN ('mosh', 'tmux')),
+      session_data TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now')),
+      last_activity TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (credential_id) REFERENCES credentials(id) ON DELETE CASCADE,
+      UNIQUE(user_id, credential_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_user_credential ON sessions(user_id, credential_id);
   `);
 
   console.log('Database initialized at:', config.databasePath);
@@ -256,6 +271,97 @@ export function deleteCredential(credentialId: number, userId: number): boolean 
     DELETE FROM credentials WHERE id = ? AND user_id = ?
   `).run(credentialId, userId);
   return result.changes > 0;
+}
+
+/**
+ * Session data types
+ */
+export interface DbSession {
+  id: number;
+  user_id: number;
+  credential_id: number;
+  session_type: 'mosh' | 'tmux';
+  session_data: string;
+  created_at: string;
+  last_activity: string;
+}
+
+export interface MoshSessionData {
+  host: string;
+  port: number;
+  key: string;
+}
+
+export interface TmuxSessionData {
+  sessionName: string;
+}
+
+/**
+ * Get an existing session for a user+credential
+ */
+export function getSession(userId: number, credentialId: number): DbSession | undefined {
+  const db = getDatabase();
+  return db.prepare(`
+    SELECT * FROM sessions WHERE user_id = ? AND credential_id = ?
+  `).get(userId, credentialId) as DbSession | undefined;
+}
+
+/**
+ * Save or update a session
+ */
+export function saveSession(
+  userId: number,
+  credentialId: number,
+  sessionType: 'mosh' | 'tmux',
+  sessionData: MoshSessionData | TmuxSessionData
+): DbSession {
+  const db = getDatabase();
+  const dataJson = JSON.stringify(sessionData);
+
+  db.prepare(`
+    INSERT INTO sessions (user_id, credential_id, session_type, session_data)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(user_id, credential_id) DO UPDATE SET
+      session_type = excluded.session_type,
+      session_data = excluded.session_data,
+      last_activity = datetime('now')
+  `).run(userId, credentialId, sessionType, dataJson);
+
+  return getSession(userId, credentialId)!;
+}
+
+/**
+ * Update session last activity timestamp
+ */
+export function updateSessionActivity(userId: number, credentialId: number): void {
+  const db = getDatabase();
+  db.prepare(`
+    UPDATE sessions SET last_activity = datetime('now')
+    WHERE user_id = ? AND credential_id = ?
+  `).run(userId, credentialId);
+}
+
+/**
+ * Delete a session
+ */
+export function deleteSession(userId: number, credentialId: number): boolean {
+  const db = getDatabase();
+  const result = db.prepare(`
+    DELETE FROM sessions WHERE user_id = ? AND credential_id = ?
+  `).run(userId, credentialId);
+  return result.changes > 0;
+}
+
+/**
+ * Delete stale sessions (older than specified hours)
+ */
+export function deleteStaleSessionsOlderThan(hours: number): number {
+  const db = getDatabase();
+  const result = db.prepare(`
+    DELETE FROM sessions
+    WHERE last_activity < datetime('now', '-' || ? || ' hours')
+  `).run(hours);
+  return result.changes;
 }
 
 /**
