@@ -132,8 +132,8 @@ async function handleConnect(
     const rows = message.rows || 24;
 
     if (credential.use_mosh) {
-      // Create or reuse Mosh session
-      console.log(`Creating/resuming Mosh session for user ${user.id} to ${decrypted.host}`);
+      // Try Mosh first, fall back to SSH+tmux if it fails
+      console.log(`Attempting Mosh session for user ${user.id} to ${decrypted.host}`);
 
       let existingMoshData: MoshSessionData | undefined;
       if (existingDbSession && existingDbSession.session_type === 'mosh') {
@@ -144,23 +144,52 @@ async function handleConnect(
         }
       }
 
-      const result = await createOrReuseMoshSession(
-        connectionOptions,
-        cols,
-        rows,
-        existingMoshData
-      );
+      try {
+        const result = await createOrReuseMoshSession(
+          connectionOptions,
+          cols,
+          rows,
+          existingMoshData
+        );
 
-      session = result.session;
-      sessionType = 'mosh';
+        session = result.session;
+        sessionType = 'mosh';
 
-      // Save session data if new or updated
-      if (!result.isReused || !existingDbSession) {
-        saveSession(dbUser.id, connectionId, 'mosh', result.sessionData);
-        console.log(`Saved new mosh session data for user ${user.id}`);
-      } else {
-        updateSessionActivity(dbUser.id, connectionId);
-        console.log(`Reused existing mosh session for user ${user.id}`);
+        // Save session data if new or updated
+        if (!result.isReused || !existingDbSession) {
+          saveSession(dbUser.id, connectionId, 'mosh', result.sessionData);
+          console.log(`Saved new mosh session data for user ${user.id}`);
+        } else {
+          updateSessionActivity(dbUser.id, connectionId);
+          console.log(`Reused existing mosh session for user ${user.id}`);
+        }
+      } catch (moshError) {
+        // Mosh failed - fall back to SSH+tmux
+        console.log(`Mosh failed: ${(moshError as Error).message}, falling back to SSH+tmux`);
+
+        // Clear any stale mosh session data
+        deleteSession(dbUser.id, connectionId);
+
+        // Fall through to SSH+tmux
+        const tmuxSessionName = `ssh_${dbUser.id}_${connectionId}`;
+        const result = await createPersistentSSHSession(
+          connectionOptions,
+          tmuxSessionName,
+          cols,
+          rows
+        );
+
+        session = result.session;
+        sessionType = 'ssh';
+        saveSession(dbUser.id, connectionId, 'tmux', result.sessionData);
+
+        // Notify user about fallback
+        sendMessage(ws, {
+          type: 'output',
+          data: '\r\n\x1b[33m[Mosh unavailable - using SSH with persistent tmux session]\x1b[0m\r\n'
+        });
+
+        console.log(`Fell back to SSH+tmux session '${tmuxSessionName}' for user ${user.id}`);
       }
     } else {
       // Create persistent SSH session with tmux
