@@ -2,10 +2,19 @@ import WebSocket from 'ws';
 import { IncomingMessage } from 'http';
 import { URL } from 'url';
 import { validateWebSocketAuth } from '../middleware/telegramAuth';
-import { getCredentialById, getUserByTelegramId } from '../db/sqlite';
+import {
+  getCredentialById,
+  getUserByTelegramId,
+  getSession,
+  saveSession,
+  deleteSession,
+  updateSessionActivity,
+  MoshSessionData,
+  TmuxSessionData,
+} from '../db/sqlite';
 import { decryptCredentials } from '../services/encryptionService';
-import { createSSHSession, SSHSession } from '../services/sshService';
-import { createMoshSession, MoshSession } from '../services/moshService';
+import { createPersistentSSHSession, SSHSession } from '../services/sshService';
+import { createOrReuseMoshSession, MoshSession } from '../services/moshService';
 import {
   WSMessage,
   WSConnectMessage,
@@ -67,7 +76,7 @@ async function handleMessage(
 }
 
 /**
- * Handle connect message - establish SSH or Mosh session
+ * Handle connect message - establish SSH or Mosh session with persistence
  */
 async function handleConnect(
   ws: WebSocket,
@@ -75,8 +84,12 @@ async function handleConnect(
   user: TelegramUser,
   dbUser: DbUser
 ): Promise<void> {
-  // Close existing session if any
-  handleDisconnect(ws);
+  // Close existing WebSocket session if any (but don't destroy remote session)
+  const existingSession = activeSessions.get(ws);
+  if (existingSession) {
+    // Just remove from map, don't call close() which would kill the remote session
+    activeSessions.delete(ws);
+  }
 
   const { connectionId } = message;
 
@@ -113,20 +126,66 @@ async function handleConnect(
     let session: SSHSession | MoshSession;
     let sessionType: 'ssh' | 'mosh';
 
+    // Check for existing persistent session
+    const existingDbSession = getSession(dbUser.id, connectionId);
+    const cols = message.cols || 80;
+    const rows = message.rows || 24;
+
     if (credential.use_mosh) {
-      // Create Mosh session
-      console.log(`Creating Mosh session for user ${user.id} to ${decrypted.host}`);
-      session = await createMoshSession(
+      // Create or reuse Mosh session
+      console.log(`Creating/resuming Mosh session for user ${user.id} to ${decrypted.host}`);
+
+      let existingMoshData: MoshSessionData | undefined;
+      if (existingDbSession && existingDbSession.session_type === 'mosh') {
+        try {
+          existingMoshData = JSON.parse(existingDbSession.session_data) as MoshSessionData;
+        } catch {
+          console.log('Failed to parse existing mosh session data');
+        }
+      }
+
+      const result = await createOrReuseMoshSession(
         connectionOptions,
-        message.cols || 80,
-        message.rows || 24
+        cols,
+        rows,
+        existingMoshData
       );
+
+      session = result.session;
       sessionType = 'mosh';
+
+      // Save session data if new or updated
+      if (!result.isReused || !existingDbSession) {
+        saveSession(dbUser.id, connectionId, 'mosh', result.sessionData);
+        console.log(`Saved new mosh session data for user ${user.id}`);
+      } else {
+        updateSessionActivity(dbUser.id, connectionId);
+        console.log(`Reused existing mosh session for user ${user.id}`);
+      }
     } else {
-      // Create SSH session
-      console.log(`Creating SSH session for user ${user.id} to ${decrypted.host}`);
-      session = await createSSHSession(connectionOptions);
+      // Create persistent SSH session with tmux
+      console.log(`Creating/resuming SSH+tmux session for user ${user.id} to ${decrypted.host}`);
+
+      // Generate unique tmux session name
+      const tmuxSessionName = `ssh_${dbUser.id}_${connectionId}`;
+
+      const result = await createPersistentSSHSession(
+        connectionOptions,
+        tmuxSessionName,
+        cols,
+        rows
+      );
+
+      session = result.session;
       sessionType = 'ssh';
+
+      // Save or update session data
+      saveSession(dbUser.id, connectionId, 'tmux', result.sessionData);
+      if (result.isReused) {
+        console.log(`Resumed existing tmux session '${tmuxSessionName}' for user ${user.id}`);
+      } else {
+        console.log(`Created new tmux session '${tmuxSessionName}' for user ${user.id}`);
+      }
     }
 
     // Store active session
@@ -140,10 +199,13 @@ async function handleConnect(
     session.on('close', () => {
       sendMessage(ws, { type: 'disconnect' });
       activeSessions.delete(ws);
+      // Note: We don't delete the DB session here - it persists for reconnection
     });
 
     session.on('error', (err: Error) => {
       sendMessage(ws, { type: 'error', error: err.message });
+      // On error, delete the session data as it's likely stale
+      deleteSession(dbUser.id, connectionId);
     });
 
     // Send connected message
@@ -156,6 +218,8 @@ async function handleConnect(
   } catch (err) {
     const error = err as Error;
     console.error('Failed to create session:', error.message);
+    // Clean up any stale session data on connection failure
+    deleteSession(dbUser.id, connectionId);
     sendMessage(ws, {
       type: 'error',
       error: `Connection failed: ${error.message}`,
@@ -193,11 +257,13 @@ function handleResize(ws: WebSocket, message: WSResizeMessage): void {
 }
 
 /**
- * Handle disconnect message - close terminal session
+ * Handle disconnect message - detach from terminal session (session persists)
  */
 function handleDisconnect(ws: WebSocket): void {
   const activeSession = activeSessions.get(ws);
   if (activeSession) {
+    // For SSH/tmux sessions, close() detaches from tmux (session persists on remote)
+    // For Mosh sessions, close() kills mosh-client but mosh-server persists on remote
     activeSession.session.close();
     activeSessions.delete(ws);
   }

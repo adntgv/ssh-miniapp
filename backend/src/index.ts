@@ -3,7 +3,7 @@ import http from 'http';
 import WebSocket from 'ws';
 import path from 'path';
 import { config } from './config';
-import { initDatabase, closeDatabase } from './db/sqlite';
+import { initDatabase, closeDatabase, deleteStaleSessionsOlderThan } from './db/sqlite';
 import { telegramAuthMiddleware } from './middleware/telegramAuth';
 import { setupWebSocketHandler, getActiveSessionCount } from './websocket/terminalHandler';
 import connectionsRouter from './routes/connections';
@@ -78,6 +78,23 @@ async function start() {
     // Setup WebSocket handler
     setupWebSocketHandler(wss);
     console.log('WebSocket handler initialized');
+
+    // Cleanup stale sessions every hour
+    const SESSION_CLEANUP_INTERVAL = 60 * 60 * 1000; // 1 hour
+    const SESSION_MAX_AGE_HOURS = 24; // Sessions older than 24 hours are considered stale
+
+    setInterval(() => {
+      const deleted = deleteStaleSessionsOlderThan(SESSION_MAX_AGE_HOURS);
+      if (deleted > 0) {
+        console.log(`Cleaned up ${deleted} stale sessions`);
+      }
+    }, SESSION_CLEANUP_INTERVAL);
+
+    // Initial cleanup on startup
+    const initialCleanup = deleteStaleSessionsOlderThan(SESSION_MAX_AGE_HOURS);
+    if (initialCleanup > 0) {
+      console.log(`Initial cleanup: removed ${initialCleanup} stale sessions`);
+    }
 
     // Start server
     server.listen(config.port, () => {
