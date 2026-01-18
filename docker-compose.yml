@@ -9,8 +9,8 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      # SQLite database persistence
-      - ./data:/app/data
+      # SQLite database persistence - uses named volume for Coolify compatibility
+      - ssh-miniapp-data:/app/data
     environment:
       - BOT_TOKEN=${BOT_TOKEN}
       - MASTER_KEY=${MASTER_KEY}
@@ -26,3 +26,7 @@ services:
 networks:
   ssh-miniapp-network:
     driver: bridge
+
+volumes:
+  ssh-miniapp-data:
+    driver: local
