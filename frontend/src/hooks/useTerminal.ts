@@ -17,10 +17,13 @@ interface UseTerminalReturn {
   isConnecting: boolean;
   isConnected: boolean;
   error: string | null;
+  isScrolledUp: boolean;
   connect: () => void;
   disconnect: () => void;
   sendInput: (data: string) => void;
   resize: () => void;
+  scrollPages: (pages: number) => void;
+  scrollToBottom: () => void;
 }
 
 export function useTerminal({
@@ -37,6 +40,7 @@ export function useTerminal({
   const [isConnecting, setIsConnecting] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isScrolledUp, setIsScrolledUp] = useState(false);
 
   // Store callbacks in refs to avoid dependency changes
   const onConnectedRef = useRef(onConnected);
@@ -98,6 +102,20 @@ export function useTerminal({
 
     terminal.open(terminalRef.current);
     fitAddon.current.fit();
+
+    // Track scroll position to show/hide "scroll to bottom" indicator
+    terminal.onScroll(() => {
+      const buffer = terminal.buffer.active;
+      const atBottom = buffer.viewportY >= buffer.baseY;
+      setIsScrolledUp(!atBottom);
+    });
+
+    // Also track when new content arrives (it auto-scrolls to bottom)
+    terminal.onWriteParsed(() => {
+      const buffer = terminal.buffer.active;
+      const atBottom = buffer.viewportY >= buffer.baseY;
+      setIsScrolledUp(!atBottom);
+    });
 
     terminalInstance.current = terminal;
 
@@ -292,6 +310,19 @@ export function useTerminal({
     }
   }, []);
 
+  const scrollPages = useCallback((pages: number) => {
+    if (terminalInstance.current) {
+      terminalInstance.current.scrollPages(pages);
+    }
+  }, []);
+
+  const scrollToBottom = useCallback(() => {
+    if (terminalInstance.current) {
+      terminalInstance.current.scrollToBottom();
+      setIsScrolledUp(false);
+    }
+  }, []);
+
   // Handle window resize
   useEffect(() => {
     const handleResize = () => {
@@ -320,9 +351,12 @@ export function useTerminal({
     isConnecting,
     isConnected,
     error,
+    isScrolledUp,
     connect,
     disconnect,
     sendInput,
     resize,
+    scrollPages,
+    scrollToBottom,
   };
 }

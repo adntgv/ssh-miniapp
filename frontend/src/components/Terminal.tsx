@@ -21,10 +21,13 @@ export function Terminal({
     isConnecting,
     isConnected,
     error,
+    isScrolledUp,
     connect,
     disconnect,
     sendInput,
     resize,
+    scrollPages,
+    scrollToBottom,
   } = useTerminal({
     connectionId,
     initData,
@@ -147,14 +150,43 @@ export function Terminal({
       )}
 
       {/* Terminal container */}
-      <div
-        ref={terminalRef}
-        style={{
-          flex: 1,
-          padding: '4px',
-          overflow: 'hidden',
-        }}
-      />
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        <div
+          ref={terminalRef}
+          style={{
+            height: '100%',
+            padding: '4px',
+            overflow: 'hidden',
+          }}
+        />
+        {/* Scroll to bottom floating button */}
+        {isScrolledUp && isConnected && (
+          <button
+            onClick={scrollToBottom}
+            style={{
+              position: 'absolute',
+              bottom: '12px',
+              right: '12px',
+              width: '36px',
+              height: '36px',
+              borderRadius: '50%',
+              backgroundColor: 'rgba(64, 64, 64, 0.85)',
+              border: '1px solid #606060',
+              color: '#ffffff',
+              fontSize: '18px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 10,
+              backdropFilter: 'blur(4px)',
+            }}
+            aria-label="Scroll to bottom"
+          >
+            &#8595;
+          </button>
+        )}
+      </div>
 
       {/* Special keys row */}
       {isConnected && (
@@ -169,6 +201,26 @@ export function Terminal({
             borderTop: '1px solid #404040',
           }}
         >
+          <button
+            onClick={() => scrollPages(-1)}
+            style={{
+              width: '48px',
+              height: '40px',
+              backgroundColor: '#404040',
+              border: 'none',
+              borderRadius: '6px',
+              color: '#ffffff',
+              fontSize: '10px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            aria-label="Page up"
+          >
+            PgUp
+          </button>
           <button
             onClick={() => sendInput('\x1b[D')}
             style={{
@@ -244,6 +296,26 @@ export function Terminal({
             aria-label="Right arrow"
           >
             →
+          </button>
+          <button
+            onClick={() => scrollPages(1)}
+            style={{
+              width: '48px',
+              height: '40px',
+              backgroundColor: '#404040',
+              border: 'none',
+              borderRadius: '6px',
+              color: '#ffffff',
+              fontSize: '10px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+            aria-label="Page down"
+          >
+            PgDn
           </button>
         </div>
       )}
