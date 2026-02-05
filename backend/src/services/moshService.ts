@@ -270,61 +270,88 @@ export async function createOrReuseMoshSession(
 
 /**
  * Internal function to create mosh session with known server info
+ * Waits for connection to be established before returning
  */
-async function createMoshSessionInternal(
+function createMoshSessionInternal(
   options: SSHConnectionOptions,
   serverInfo: MoshServerInfo,
   cols: number,
   rows: number
 ): Promise<MoshSession> {
-  const session = new EventEmitter() as MoshSession;
+  return new Promise((resolve, reject) => {
+    const session = new EventEmitter() as MoshSession;
 
-  const env = {
-    ...process.env,
-    MOSH_KEY: serverInfo.key,
-    TERM: 'xterm-256color',
-  };
+    const env = {
+      ...process.env,
+      MOSH_KEY: serverInfo.key,
+      TERM: 'xterm-256color',
+    };
 
-  const moshClientArgs = [options.host, serverInfo.port.toString()];
+    const moshClientArgs = [options.host, serverInfo.port.toString()];
 
-  console.log(`Spawning mosh-client to ${options.host}:${serverInfo.port}`);
+    console.log(`Spawning mosh-client to ${options.host}:${serverInfo.port}`);
 
-  let ptyProcess: pty.IPty;
+    let ptyProcess: pty.IPty;
+    let hasReceivedData = false;
+    let connectionFailed = false;
 
-  try {
-    ptyProcess = pty.spawn('mosh-client', moshClientArgs, {
-      name: 'xterm-256color',
-      cols,
-      rows,
-      cwd: process.env.HOME,
-      env: env as { [key: string]: string },
+    try {
+      ptyProcess = pty.spawn('mosh-client', moshClientArgs, {
+        name: 'xterm-256color',
+        cols,
+        rows,
+        cwd: process.env.HOME,
+        env: env as { [key: string]: string },
+      });
+    } catch (err) {
+      reject(new Error(`Failed to spawn mosh-client: ${(err as Error).message}`));
+      return;
+    }
+
+    // Timeout for initial connection - if no data within 10 seconds, connection failed
+    const connectionTimeout = setTimeout(() => {
+      if (!hasReceivedData) {
+        console.log('Mosh connection timeout - no data received from server');
+        connectionFailed = true;
+        ptyProcess.kill();
+        reject(new Error('Mosh connection timeout - UDP port may be blocked'));
+      }
+    }, 10000);
+
+    ptyProcess.onData((data: string) => {
+      if (!hasReceivedData) {
+        hasReceivedData = true;
+        clearTimeout(connectionTimeout);
+        // Connection successful - resolve with session
+        resolve(session);
+      }
+      session.emit('data', data);
     });
-  } catch (err) {
-    throw new Error(`Failed to spawn mosh-client: ${(err as Error).message}`);
-  }
 
-  ptyProcess.onData((data: string) => {
-    session.emit('data', data);
+    ptyProcess.onExit(({ exitCode, signal }) => {
+      clearTimeout(connectionTimeout);
+      console.log(`Mosh client exited with code ${exitCode}, signal ${signal}`);
+      if (!hasReceivedData && !connectionFailed) {
+        // Exited before receiving any data - connection failed
+        reject(new Error(`Mosh connection failed (exit code ${exitCode})`));
+      } else {
+        session.emit('close');
+      }
+    });
+
+    session.write = (data: string) => {
+      ptyProcess.write(data);
+    };
+
+    session.resize = (cols: number, rows: number) => {
+      ptyProcess.resize(cols, rows);
+    };
+
+    session.close = () => {
+      clearTimeout(connectionTimeout);
+      ptyProcess.kill();
+    };
   });
-
-  ptyProcess.onExit(({ exitCode, signal }) => {
-    console.log(`Mosh client exited with code ${exitCode}, signal ${signal}`);
-    session.emit('close');
-  });
-
-  session.write = (data: string) => {
-    ptyProcess.write(data);
-  };
-
-  session.resize = (cols: number, rows: number) => {
-    ptyProcess.resize(cols, rows);
-  };
-
-  session.close = () => {
-    ptyProcess.kill();
-  };
-
-  return session;
 }
 
 /**
